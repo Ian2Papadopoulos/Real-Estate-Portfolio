@@ -58,22 +58,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('Error getting session:', error);
+      try {
+        console.log('🔄 Getting initial session...');
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('❌ Error getting session:', error);
+          setLoading(false);
+          return;
+        }
+
+        console.log('📱 Initial session:', session ? `User: ${session.user?.email}` : 'No session');
+        setSession(session);
+        setUser(session?.user ?? null);
+
+        if (session?.user) {
+          await loadUserProfile(session.user.id);
+        }
+        
         setLoading(false);
-        return;
+      } catch (error) {
+        console.error('💥 Error in getInitialSession:', error);
+        setLoading(false);
       }
-
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        await loadUserProfile(session.user.id);
-      }
-      
-      setLoading(false);
     };
 
     getInitialSession();
@@ -156,7 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setLoading(true);
 
-      // 1. Sign up user with Supabase Auth FIRST
+      // Step 1: Sign up user with Supabase Auth
       console.log('📝 Step 1: Creating auth user...');
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -165,11 +172,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (authError) {
         console.error('❌ Auth signup failed:', authError);
-        console.error('❌ Auth error details:', {
-          message: authError.message,
-          status: authError.status,
-          code: authError.name
-        });
         return { error: authError };
       }
 
@@ -179,9 +181,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       console.log('✅ Auth user created:', authData.user.id);
-      console.log('📧 User email confirmed?', authData.user.email_confirmed_at ? 'Yes' : 'No');
 
-      // 2. Create agency AFTER user exists
+      // Check if we got a session (should happen if email confirmation is disabled)
+      if (!authData.session) {
+        console.warn('⚠️ No session returned - email confirmation might be enabled');
+        return { 
+          error: { 
+            message: 'Please check if email confirmation is disabled in your Supabase dashboard under Authentication > Providers > Email',
+            requiresEmailConfirmation: true 
+          }
+        };
+      }
+
+      console.log('✅ Session created - email confirmation is disabled');
+
+      // Step 2: Create agency
       console.log('🏢 Step 2: Creating agency...');
       const { data: agencyData, error: agencyError } = await supabase
         .from('agencies')
@@ -196,7 +210,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('✅ Agency created:', agencyData.id);
 
-      // 3. Create user profile
+      // Step 3: Create user profile
       console.log('👤 Step 3: Creating user profile...');
       const { error: profileError } = await supabase
         .from('user_profiles')
@@ -213,19 +227,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       console.log('✅ User profile created');
-
-      // 4. Check if email confirmation is required
-      if (!authData.user.email_confirmed_at && authData.user.confirmation_sent_at) {
-        console.log('📧 Email confirmation required');
-        return { 
-          error: { 
-            message: 'Please check your email and click the confirmation link to complete signup',
-            requiresEmailConfirmation: true 
-          }
-        };
-      }
-
       console.log('🎉 Signup completed successfully!');
+      
       return { error: null };
       
     } catch (error) {
@@ -239,12 +242,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (email: string, password: string) => {
     try {
       setLoading(true);
+      console.log('🔑 Attempting sign in for:', email);
+      
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+      
+      if (error) {
+        console.error('❌ Sign in failed:', error);
+      } else {
+        console.log('✅ Sign in successful');
+      }
+      
       return { error };
     } catch (error) {
+      console.error('💥 Sign in error:', error);
       return { error };
     } finally {
       setLoading(false);
@@ -252,11 +265,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    console.log('🚪 Signing out...');
     setLoading(true);
+    
     const { error } = await supabase.auth.signOut();
     if (error) {
-      console.error('Error signing out:', error);
+      console.error('❌ Error signing out:', error);
+    } else {
+      console.log('✅ Signed out successfully');
     }
+    
     setUser(null);
     setProfile(null);
     setAgency(null);

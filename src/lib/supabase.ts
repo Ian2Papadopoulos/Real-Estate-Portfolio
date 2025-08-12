@@ -20,9 +20,68 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 export interface Database {
   public: {
     Tables: {
+      agencies: {
+        Row: {
+          id: string
+          name: string
+          address: string | null
+          phone: string | null
+          website: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          address?: string | null
+          phone?: string | null
+          website?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          address?: string | null
+          phone?: string | null
+          website?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      user_profiles: {
+        Row: {
+          id: string
+          agency_id: string
+          name: string
+          role: 'admin' | 'agent' | 'viewer'
+          phone: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          agency_id: string
+          name: string
+          role?: 'admin' | 'agent' | 'viewer'
+          phone?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          agency_id?: string
+          name?: string
+          role?: 'admin' | 'agent' | 'viewer'
+          phone?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       properties: {
         Row: {
           id: number
+          agency_id: string
           address: string
           price: number
           listing_type: 'For Sale' | 'For Rent'
@@ -39,6 +98,7 @@ export interface Database {
         }
         Insert: {
           id?: number
+          agency_id: string
           address: string
           price: number
           listing_type: 'For Sale' | 'For Rent'
@@ -55,6 +115,7 @@ export interface Database {
         }
         Update: {
           id?: number
+          agency_id?: string
           address?: string
           price?: number
           listing_type?: 'For Sale' | 'For Rent'
@@ -73,6 +134,14 @@ export interface Database {
     }
   }
 }
+
+export type Agency = Database['public']['Tables']['agencies']['Row']
+export type AgencyInsert = Database['public']['Tables']['agencies']['Insert']
+export type AgencyUpdate = Database['public']['Tables']['agencies']['Update']
+
+export type UserProfile = Database['public']['Tables']['user_profiles']['Row']
+export type UserProfileInsert = Database['public']['Tables']['user_profiles']['Insert']
+export type UserProfileUpdate = Database['public']['Tables']['user_profiles']['Update']
 
 export type Property = Database['public']['Tables']['properties']['Row']
 export type PropertyInsert = Database['public']['Tables']['properties']['Insert']
