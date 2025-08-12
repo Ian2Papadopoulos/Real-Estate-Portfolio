@@ -56,6 +56,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     // Get initial session
     const getInitialSession = async () => {
       try {
@@ -64,23 +66,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (error) {
           console.error('❌ Error getting session:', error);
-          setLoading(false);
+          if (isMounted) setLoading(false);
           return;
         }
 
-        console.log('📱 Initial session:', session ? `User: ${session.user?.email}` : 'No session');
-        setSession(session);
-        setUser(session?.user ?? null);
+        if (isMounted) {
+          console.log('📱 Initial session:', session ? `User: ${session.user?.email}` : 'No session');
+          setSession(session);
+          setUser(session?.user ?? null);
 
-        if (session?.user) {
-          await loadUserProfile(session.user.id);
-        } else {
-          setLoading(false);
+          if (session?.user) {
+            await loadUserProfile(session.user.id);
+          } else {
+            setLoading(false);
+          }
         }
-        
       } catch (error) {
         console.error('💥 Error in getInitialSession:', error);
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
@@ -89,6 +92,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!isMounted) return;
+
         console.log('🔄 Auth state changed:', event, session?.user?.email || 'No user');
         
         setSession(session);
@@ -107,79 +112,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  const loadUserProfile = async (userId: string) => {
+  const loadUserProfile = async (userId: string, retries = 3) => {
     try {
       console.log('📋 Loading user profile for:', userId);
       
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile loading timeout')), 10000)
-      );
-
-      const profilePromise = supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      // Race between query and timeout
-      const { data: profileData, error: profileError } = await Promise.race([
-        profilePromise,
-        timeoutPromise
-      ]) as any;
-
-      if (profileError) {
-        console.error('❌ Error loading profile:', profileError);
-        console.log('⚠️ Profile not found for user:', userId);
-        setLoading(false);
-        return;
-      }
-
-      if (!profileData) {
-        console.log('⚠️ No profile found for user:', userId);
-        setLoading(false);
-        return;
-      }
-
-      console.log('✅ Profile loaded:', profileData.name, profileData.role);
-      setProfile(profileData);
-
-      // Get agency data
-      if (profileData?.agency_id) {
-        console.log('🏢 Loading agency:', profileData.agency_id);
-        
-        const agencyTimeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Agency loading timeout')), 5000)
-        );
-
-        const agencyPromise = supabase
-          .from('agencies')
+      for (let i = 0; i < retries; i++) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('user_profiles')
           .select('*')
-          .eq('id', profileData.agency_id)
+          .eq('id', userId)
           .single();
 
-        try {
-          const { data: agencyData, error: agencyError } = await Promise.race([
-            agencyPromise,
-            agencyTimeoutPromise
-          ]) as any;
+        if (!profileError && profileData) {
+          console.log('✅ Profile loaded:', profileData.name, profileData.role);
+          setProfile(profileData);
 
-          if (agencyError) {
-            console.error('❌ Error loading agency:', agencyError);
-          } else {
-            console.log('✅ Agency loaded:', agencyData.name);
-            setAgency(agencyData);
+          // Get agency data
+          if (profileData?.agency_id) {
+            console.log('🏢 Loading agency:', profileData.agency_id);
+            
+            const { data: agencyData, error: agencyError } = await supabase
+              .from('agencies')
+              .select('*')
+              .eq('id', profileData.agency_id)
+              .single();
+
+            if (!agencyError && agencyData) {
+              console.log('✅ Agency loaded:', agencyData.name);
+              setAgency(agencyData);
+            } else {
+              console.error('❌ Error loading agency:', agencyError);
+            }
           }
-        } catch (agencyTimeoutError) {
-          console.error('⏰ Agency loading timeout');
+
+          setLoading(false);
+          return; // Success, exit function
+        }
+
+        // If this is not the last retry, wait and try again
+        if (i < retries - 1) {
+          console.log(`⏳ Profile not found, retrying in ${(i + 1) * 1000}ms...`);
+          await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
         }
       }
 
+      // All retries failed
+      console.error('⚠️ Profile not found after retries for user:', userId);
       setLoading(false);
+      
     } catch (error) {
       console.error('💥 Error in loadUserProfile:', error);
       setLoading(false);
@@ -213,13 +198,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('✅ Auth user created:', authData.user.id);
 
-      // Check if we got a session (should happen if email confirmation is disabled)
+      // Check if we got a session
       if (!authData.session) {
         console.warn('⚠️ No session returned - email confirmation might be enabled');
         setLoading(false);
         return { 
           error: { 
-            message: 'Please check if email confirmation is disabled in your Supabase dashboard under Authentication > Providers > Email',
+            message: 'Please check if email confirmation is disabled in your Supabase dashboard under Authentication > Settings > Email Auth > Confirm email',
             requiresEmailConfirmation: true 
           }
         };
@@ -245,14 +230,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Step 3: Create user profile
       console.log('👤 Step 3: Creating user profile...');
-      const { error: profileError } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('user_profiles')
         .insert([{
           id: authData.user.id,
           agency_id: agencyData.id,
           name,
           role: 'admin'
-        }]);
+        }])
+        .select()
+        .single();
 
       if (profileError) {
         console.error('❌ Profile creation failed:', profileError);
@@ -261,9 +248,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       console.log('✅ User profile created');
+
+      // Step 4: Set the profile and agency data immediately
+      setProfile(profileData);
+      setAgency(agencyData);
+      setLoading(false);
+
       console.log('🎉 Signup completed successfully!');
-      
-      // Profile will be loaded automatically by the auth state change listener
       return { error: null };
       
     } catch (error) {
@@ -288,6 +279,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
       } else {
         console.log('✅ Sign in successful');
+        // Profile will be loaded automatically by the auth state change listener
       }
       
       return { error };
