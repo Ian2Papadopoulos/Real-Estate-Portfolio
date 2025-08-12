@@ -1,7 +1,7 @@
 -- ================================
 -- REAL ESTATE MULTI-TENANT SCHEMA
 -- ================================
-
+DROP TABLE IF EXISTS agencies CASCADE;
 -- 1. CREATE AGENCIES TABLE
 -- ========================
 CREATE TABLE agencies (
