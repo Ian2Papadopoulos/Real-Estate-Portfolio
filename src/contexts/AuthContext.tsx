@@ -74,9 +74,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (session?.user) {
           await loadUserProfile(session.user.id);
+        } else {
+          setLoading(false);
         }
         
-        setLoading(false);
       } catch (error) {
         console.error('💥 Error in getInitialSession:', error);
         setLoading(false);
@@ -100,9 +101,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.log('🚪 No user - clearing profile data');
           setProfile(null);
           setAgency(null);
+          setLoading(false);
         }
-        
-        setLoading(false);
       }
     );
 
@@ -115,20 +115,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('📋 Loading user profile for:', userId);
       
-      // Get user profile
-      const { data: profileData, error: profileError } = await supabase
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Profile loading timeout')), 10000)
+      );
+
+      const profilePromise = supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
+      // Race between query and timeout
+      const { data: profileData, error: profileError } = await Promise.race([
+        profilePromise,
+        timeoutPromise
+      ]) as any;
+
       if (profileError) {
         console.error('❌ Error loading profile:', profileError);
+        console.log('⚠️ Profile not found for user:', userId);
+        setLoading(false);
         return;
       }
 
       if (!profileData) {
         console.log('⚠️ No profile found for user:', userId);
+        setLoading(false);
         return;
       }
 
@@ -139,21 +152,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (profileData?.agency_id) {
         console.log('🏢 Loading agency:', profileData.agency_id);
         
-        const { data: agencyData, error: agencyError } = await supabase
+        const agencyTimeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Agency loading timeout')), 5000)
+        );
+
+        const agencyPromise = supabase
           .from('agencies')
           .select('*')
           .eq('id', profileData.agency_id)
           .single();
 
-        if (agencyError) {
-          console.error('❌ Error loading agency:', agencyError);
-        } else {
-          console.log('✅ Agency loaded:', agencyData.name);
-          setAgency(agencyData);
+        try {
+          const { data: agencyData, error: agencyError } = await Promise.race([
+            agencyPromise,
+            agencyTimeoutPromise
+          ]) as any;
+
+          if (agencyError) {
+            console.error('❌ Error loading agency:', agencyError);
+          } else {
+            console.log('✅ Agency loaded:', agencyData.name);
+            setAgency(agencyData);
+          }
+        } catch (agencyTimeoutError) {
+          console.error('⏰ Agency loading timeout');
         }
       }
+
+      setLoading(false);
     } catch (error) {
       console.error('💥 Error in loadUserProfile:', error);
+      setLoading(false);
     }
   };
 
@@ -172,11 +201,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (authError) {
         console.error('❌ Auth signup failed:', authError);
+        setLoading(false);
         return { error: authError };
       }
 
       if (!authData.user) {
         console.error('❌ No user returned from auth signup');
+        setLoading(false);
         return { error: new Error('No user returned from signup') };
       }
 
@@ -185,6 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check if we got a session (should happen if email confirmation is disabled)
       if (!authData.session) {
         console.warn('⚠️ No session returned - email confirmation might be enabled');
+        setLoading(false);
         return { 
           error: { 
             message: 'Please check if email confirmation is disabled in your Supabase dashboard under Authentication > Providers > Email',
@@ -205,6 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (agencyError) {
         console.error('❌ Agency creation failed:', agencyError);
+        setLoading(false);
         return { error: new Error(`Failed to create agency: ${agencyError.message}`) };
       }
 
@@ -223,19 +256,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (profileError) {
         console.error('❌ Profile creation failed:', profileError);
+        setLoading(false);
         return { error: new Error(`Failed to create profile: ${profileError.message}`) };
       }
 
       console.log('✅ User profile created');
       console.log('🎉 Signup completed successfully!');
       
+      // Profile will be loaded automatically by the auth state change listener
       return { error: null };
       
     } catch (error) {
       console.error('💥 Signup process failed:', error);
-      return { error };
-    } finally {
       setLoading(false);
+      return { error };
     }
   };
 
@@ -251,6 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (error) {
         console.error('❌ Sign in failed:', error);
+        setLoading(false);
       } else {
         console.log('✅ Sign in successful');
       }
@@ -258,9 +293,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error };
     } catch (error) {
       console.error('💥 Sign in error:', error);
-      return { error };
-    } finally {
       setLoading(false);
+      return { error };
     }
   };
 
