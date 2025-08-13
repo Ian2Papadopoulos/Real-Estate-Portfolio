@@ -1,41 +1,38 @@
+// src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
+import { supabase, UserProfile, Agency } from '../lib/supabase';
+import { AgencyService } from '../lib/agencyService';
+import { PermissionService, Permission } from '../lib/permissionService';
 
 // Types
-export interface UserProfile {
-  id: string;
-  agency_id: string;
-  name: string;
-  role: 'admin' | 'agent' | 'viewer';
-  phone?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Agency {
-  id: string;
-  name: string;
-  address?: string;
-  phone?: string;
-  website?: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface AuthState {
   user: User | null;
   profile: UserProfile | null;
   agency: Agency | null;
   session: Session | null;
+  permissions: Permission;
   loading: boolean;
+  initialized: boolean;
 }
 
 export interface AuthContextType extends AuthState {
-  signUp: (email: string, password: string, name: string, agencyName: string) => Promise<{ error: any }>;
+  // Basic auth
   signIn: (email: string, password: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, name: string) => Promise<{ error: any }>;
+  signUpWithInvitation: (email: string, password: string, name: string, invitationToken: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  
+  // Profile management
   updateProfile: (updates: Partial<UserProfile>) => Promise<{ error: any }>;
+  refreshProfile: () => Promise<void>;
+  
+  // Super admin functions
+  createSuperAdmin: (email: string, password: string, name: string) => Promise<{ error: any }>;
+  
+  // Permission helpers
+  hasPermission: (permission: keyof Permission) => boolean;
+  canAccessAgency: (agencyId: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,20 +50,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [agency, setAgency] = useState<Agency | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [permissions, setPermissions] = useState<Permission>(PermissionService.getPermissions(null));
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
-    // Get initial session
-    const getInitialSession = async () => {
+    const initializeAuth = async () => {
       try {
-        console.log('🔄 Getting initial session...');
+        console.log('🔄 Initializing authentication...');
+        
+        // Get initial session
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
           console.error('❌ Error getting session:', error);
-          if (isMounted) setLoading(false);
+          if (isMounted) {
+            setLoading(false);
+            setInitialized(true);
+          }
           return;
         }
 
@@ -76,18 +79,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(session?.user ?? null);
 
           if (session?.user) {
-            await loadUserProfile(session.user.id);
+            await loadUserData(session.user.id);
           } else {
             setLoading(false);
           }
+          
+          setInitialized(true);
         }
       } catch (error) {
-        console.error('💥 Error in getInitialSession:', error);
-        if (isMounted) setLoading(false);
+        console.error('💥 Error initializing auth:', error);
+        if (isMounted) {
+          setLoading(false);
+          setInitialized(true);
+        }
       }
     };
 
-    getInitialSession();
+    initializeAuth();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -100,13 +108,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          console.log('👤 Loading profile for user:', session.user.email);
-          await loadUserProfile(session.user.id);
+          console.log('👤 Loading user data for:', session.user.email);
+          await loadUserData(session.user.id);
         } else {
-          console.log('🚪 No user - clearing profile data');
-          setProfile(null);
-          setAgency(null);
-          setLoading(false);
+          console.log('🚪 No user - clearing data');
+          clearUserData();
         }
       }
     );
@@ -117,11 +123,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const loadUserProfile = async (userId: string, retries = 3) => {
+  const loadUserData = async (userId: string, retries = 3) => {
     try {
-      console.log('📋 Loading user profile for:', userId);
+      console.log('📋 Loading user data for:', userId);
       
       for (let i = 0; i < retries; i++) {
+        // Load user profile
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
           .select('*')
@@ -132,8 +139,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.log('✅ Profile loaded:', profileData.name, profileData.role);
           setProfile(profileData);
 
-          // Get agency data
-          if (profileData?.agency_id) {
+          // Update permissions
+          const userPermissions = PermissionService.getPermissions(profileData);
+          setPermissions(userPermissions);
+
+          // Load agency data if user has an agency
+          if (profileData.agency_id) {
             console.log('🏢 Loading agency:', profileData.agency_id);
             
             const { data: agencyData, error: agencyError } = await supabase
@@ -147,8 +158,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setAgency(agencyData);
             } else {
               console.error('❌ Error loading agency:', agencyError);
+              setAgency(null);
             }
+          } else {
+            // Super admin has no agency
+            setAgency(null);
           }
+
+          // Update last login
+          await supabase
+            .from('user_profiles')
+            .update({ last_login_at: new Date().toISOString() })
+            .eq('id', userId);
 
           setLoading(false);
           return; // Success, exit function
@@ -166,22 +187,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
       
     } catch (error) {
-      console.error('💥 Error in loadUserProfile:', error);
+      console.error('💥 Error loading user data:', error);
       setLoading(false);
     }
   };
 
-  const signUp = async (email: string, password: string, name: string, agencyName: string) => {
-    console.log('🔄 Starting signup process...', { email, name, agencyName });
+  const clearUserData = () => {
+    setProfile(null);
+    setAgency(null);
+    setPermissions(PermissionService.getPermissions(null));
+    setLoading(false);
+  };
+
+  const signIn = async (email: string, password: string) => {
+    try {
+      setLoading(true);
+      console.log('🔑 Attempting sign in for:', email);
+      
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      
+      if (error) {
+        console.error('❌ Sign in failed:', error);
+        setLoading(false);
+      } else {
+        console.log('✅ Sign in successful');
+        // User data will be loaded automatically by the auth state change listener
+      }
+      
+      return { error };
+    } catch (error) {
+      console.error('💥 Sign in error:', error);
+      setLoading(false);
+      return { error };
+    }
+  };
+
+  const signUp = async (email: string, password: string, name: string) => {
+    console.log('🔄 Starting basic signup process...', { email, name });
     
     try {
       setLoading(true);
 
-      // Step 1: Sign up user with Supabase Auth
-      console.log('📝 Step 1: Creating auth user...');
+      // Check if this is the first user (should become super admin)
+      const { data: existingProfiles } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .limit(1);
+
+      const isFirstUser = !existingProfiles || existingProfiles.length === 0;
+
+      // Sign up user with Supabase Auth
+      console.log('📝 Creating auth user...');
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            name: name
+          }
+        }
       });
 
       if (authError) {
@@ -210,33 +277,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      console.log('✅ Session created - email confirmation is disabled');
-
-      // Step 2: Create agency
-      console.log('🏢 Step 2: Creating agency...');
-      const { data: agencyData, error: agencyError } = await supabase
-        .from('agencies')
-        .insert([{ name: agencyName }])
-        .select()
-        .single();
-
-      if (agencyError) {
-        console.error('❌ Agency creation failed:', agencyError);
-        setLoading(false);
-        return { error: new Error(`Failed to create agency: ${agencyError.message}`) };
-      }
-
-      console.log('✅ Agency created:', agencyData.id);
-
-      // Step 3: Create user profile
-      console.log('👤 Step 3: Creating user profile...');
+      // Create user profile
+      const role = isFirstUser ? 'super_admin' : 'viewer'; // Default new users to viewer until invited
+      
+      console.log('👤 Creating user profile with role:', role);
       const { data: profileData, error: profileError } = await supabase
         .from('user_profiles')
         .insert([{
           id: authData.user.id,
-          agency_id: agencyData.id,
+          agency_id: null, // No agency for basic signup
           name,
-          role: 'admin'
+          role
         }])
         .select()
         .single();
@@ -249,12 +300,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('✅ User profile created');
 
-      // Step 4: Set the profile and agency data immediately
+      // Set the profile data immediately
       setProfile(profileData);
-      setAgency(agencyData);
+      setPermissions(PermissionService.getPermissions(profileData));
+      setAgency(null); // No agency for basic signup
       setLoading(false);
 
-      console.log('🎉 Signup completed successfully!');
+      if (isFirstUser) {
+        console.log('🎉 First user created as super admin!');
+      } else {
+        console.log('🎉 Basic signup completed successfully!');
+      }
+      
       return { error: null };
       
     } catch (error) {
@@ -264,27 +321,132 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signUpWithInvitation = async (email: string, password: string, name: string, invitationToken: string) => {
+    console.log('🔄 Starting invitation signup process...', { email, name, invitationToken });
+    
     try {
       setLoading(true);
-      console.log('🔑 Attempting sign in for:', email);
-      
-      const { error } = await supabase.auth.signInWithPassword({
+
+      // Verify invitation token first
+      const invitation = await AgencyService.getInvitationByToken(invitationToken);
+      if (!invitation) {
+        setLoading(false);
+        return { error: new Error('Invalid or expired invitation token') };
+      }
+
+      if (invitation.email !== email) {
+        setLoading(false);
+        return { error: new Error('Email does not match invitation') };
+      }
+
+      // Sign up user with Supabase Auth
+      console.log('📝 Creating auth user with invitation...');
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            name: name,
+            invitationToken: invitationToken
+          }
+        }
       });
-      
-      if (error) {
-        console.error('❌ Sign in failed:', error);
+
+      if (authError) {
+        console.error('❌ Auth signup failed:', authError);
         setLoading(false);
-      } else {
-        console.log('✅ Sign in successful');
-        // Profile will be loaded automatically by the auth state change listener
+        return { error: authError };
       }
+
+      if (!authData.user || !authData.session) {
+        console.error('❌ No user/session returned from auth signup');
+        setLoading(false);
+        return { error: new Error('Signup failed - no user or session returned') };
+      }
+
+      console.log('✅ Auth user created:', authData.user.id);
+
+      // Accept the invitation (this creates the user profile)
+      console.log('📨 Accepting invitation...');
+      const profile = await AgencyService.acceptInvitation(invitationToken);
+
+      console.log('✅ Invitation accepted, profile created');
+
+      // Load agency data
+      if (profile.agency_id) {
+        const agency = await AgencyService.getAgencyById(profile.agency_id);
+        setAgency(agency);
+      }
+
+      // Set the profile data immediately
+      setProfile(profile);
+      setPermissions(PermissionService.getPermissions(profile));
+      setLoading(false);
+
+      console.log('🎉 Invitation signup completed successfully!');
+      return { error: null };
       
-      return { error };
     } catch (error) {
-      console.error('💥 Sign in error:', error);
+      console.error('💥 Invitation signup failed:', error);
+      setLoading(false);
+      return { error };
+    }
+  };
+
+  const createSuperAdmin = async (email: string, password: string, name: string) => {
+    console.log('🔄 Creating super admin...', { email, name });
+    
+    try {
+      setLoading(true);
+
+      // Only existing super admin can create new super admin
+      if (profile?.role !== 'super_admin') {
+        setLoading(false);
+        return { error: new Error('Only super administrators can create new super admins') };
+      }
+
+      // Sign up user with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name: name
+          }
+        }
+      });
+
+      if (authError) {
+        setLoading(false);
+        return { error: authError };
+      }
+
+      if (!authData.user) {
+        setLoading(false);
+        return { error: new Error('No user returned from signup') };
+      }
+
+      // Create super admin profile
+      const { error: profileError } = await supabase
+        .from('user_profiles')
+        .insert([{
+          id: authData.user.id,
+          agency_id: null,
+          name,
+          role: 'super_admin'
+        }]);
+
+      if (profileError) {
+        setLoading(false);
+        return { error: new Error(`Failed to create super admin profile: ${profileError.message}`) };
+      }
+
+      setLoading(false);
+      console.log('🎉 Super admin created successfully!');
+      return { error: null };
+      
+    } catch (error) {
+      console.error('💥 Super admin creation failed:', error);
       setLoading(false);
       return { error };
     }
@@ -305,6 +467,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfile(null);
     setAgency(null);
     setSession(null);
+    setPermissions(PermissionService.getPermissions(null));
     setLoading(false);
   };
 
@@ -326,10 +489,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setProfile(data);
+      setPermissions(PermissionService.getPermissions(data));
       return { error: null };
     } catch (error) {
       return { error };
     }
+  };
+
+  const refreshProfile = async () => {
+    if (!user) return;
+    
+    try {
+      await loadUserData(user.id, 1);
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+    }
+  };
+
+  // Permission helpers
+  const hasPermission = (permission: keyof Permission): boolean => {
+    return PermissionService.hasPermission(profile, permission);
+  };
+
+  const canAccessAgency = (agencyId: string): boolean => {
+    return PermissionService.canAccessAgency(profile, agencyId);
   };
 
   const value = {
@@ -337,11 +520,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile,
     agency,
     session,
+    permissions,
     loading,
-    signUp,
+    initialized,
     signIn,
+    signUp,
+    signUpWithInvitation,
     signOut,
     updateProfile,
+    refreshProfile,
+    createSuperAdmin,
+    hasPermission,
+    canAccessAgency,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

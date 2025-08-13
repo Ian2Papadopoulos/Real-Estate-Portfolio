@@ -1,3 +1,4 @@
+// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js'
 
 // Get environment variables
@@ -16,7 +17,7 @@ if (!supabaseAnonKey) {
 // Create and export the Supabase client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-// Database types based on your ACTUAL SQL schema
+// Enhanced Database types based on the new schema
 export interface Database {
   public: {
     Tables: {
@@ -27,6 +28,9 @@ export interface Database {
           address: string | null
           phone: string | null
           website: string | null
+          status: 'active' | 'suspended' | 'inactive'
+          max_users: number
+          subscription_tier: string
           created_at: string
           updated_at: string
         }
@@ -36,6 +40,9 @@ export interface Database {
           address?: string | null
           phone?: string | null
           website?: string | null
+          status?: 'active' | 'suspended' | 'inactive'
+          max_users?: number
+          subscription_tier?: string
           created_at?: string
           updated_at?: string
         }
@@ -45,6 +52,9 @@ export interface Database {
           address?: string | null
           phone?: string | null
           website?: string | null
+          status?: 'active' | 'suspended' | 'inactive'
+          max_users?: number
+          subscription_tier?: string
           created_at?: string
           updated_at?: string
         }
@@ -52,28 +62,34 @@ export interface Database {
       user_profiles: {
         Row: {
           id: string
-          agency_id: string
+          agency_id: string | null
           name: string
-          role: 'admin' | 'agent' | 'viewer'
+          role: 'super_admin' | 'agency_admin' | 'agent' | 'viewer'
           phone: string | null
+          is_active: boolean
+          last_login_at: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id: string
-          agency_id: string
+          agency_id?: string | null
           name: string
-          role?: 'admin' | 'agent' | 'viewer'
+          role?: 'super_admin' | 'agency_admin' | 'agent' | 'viewer'
           phone?: string | null
+          is_active?: boolean
+          last_login_at?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
-          agency_id?: string
+          agency_id?: string | null
           name?: string
-          role?: 'admin' | 'agent' | 'viewer'
+          role?: 'super_admin' | 'agency_admin' | 'agent' | 'viewer'
           phone?: string | null
+          is_active?: boolean
+          last_login_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -91,10 +107,13 @@ export interface Database {
           sqft: number
           status: 'Available' | 'Pending' | 'Sold' | 'Off Market'
           agent: string | null
-          created_at: string
           owner_name: string | null
           owner_phone: string | null
           comments: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string | null
         }
         Insert: {
           id?: number
@@ -108,10 +127,13 @@ export interface Database {
           sqft?: number
           status: 'Available' | 'Pending' | 'Sold' | 'Off Market'
           agent?: string | null
-          created_at?: string
           owner_name?: string | null
           owner_phone?: string | null
           comments?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string | null
         }
         Update: {
           id?: number
@@ -125,11 +147,79 @@ export interface Database {
           sqft?: number
           status?: 'Available' | 'Pending' | 'Sold' | 'Off Market'
           agent?: string | null
-          created_at?: string
           owner_name?: string | null
           owner_phone?: string | null
           comments?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string | null
         }
+      }
+      agency_invitations: {
+        Row: {
+          id: string
+          agency_id: string
+          email: string
+          role: 'agency_admin' | 'agent' | 'viewer'
+          invited_by: string | null
+          token: string
+          expires_at: string
+          used_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          agency_id: string
+          email: string
+          role?: 'agency_admin' | 'agent' | 'viewer'
+          invited_by?: string | null
+          token?: string
+          expires_at?: string
+          used_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          agency_id?: string
+          email?: string
+          role?: 'agency_admin' | 'agent' | 'viewer'
+          invited_by?: string | null
+          token?: string
+          expires_at?: string
+          used_at?: string | null
+          created_at?: string
+        }
+      }
+    }
+    Functions: {
+      is_super_admin: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      get_user_agency_id: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      is_agency_admin: {
+        Args: {
+          target_agency_id?: string
+        }
+        Returns: boolean
+      }
+      create_agency_invitation: {
+        Args: {
+          p_agency_id: string
+          p_email: string
+          p_role?: string
+        }
+        Returns: string
+      }
+      accept_invitation: {
+        Args: {
+          p_token: string
+        }
+        Returns: boolean
       }
     }
   }
@@ -146,3 +236,56 @@ export type UserProfileUpdate = Database['public']['Tables']['user_profiles']['U
 export type Property = Database['public']['Tables']['properties']['Row']
 export type PropertyInsert = Database['public']['Tables']['properties']['Insert']
 export type PropertyUpdate = Database['public']['Tables']['properties']['Update']
+
+export type AgencyInvitation = Database['public']['Tables']['agency_invitations']['Row']
+export type AgencyInvitationInsert = Database['public']['Tables']['agency_invitations']['Insert']
+export type AgencyInvitationUpdate = Database['public']['Tables']['agency_invitations']['Update']
+
+// Helper types
+export type Role = UserProfile['role']
+
+// Auth helper functions
+export const getCurrentUser = async () => {
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
+
+export const getCurrentUserProfile = async (): Promise<UserProfile | null> => {
+  const user = await getCurrentUser()
+  if (!user) return null
+
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single()
+
+  if (error) {
+    console.error('Error fetching user profile:', error)
+    return null
+  }
+
+  return data
+}
+
+export const isSuperAdmin = async (): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase.rpc('is_super_admin')
+    if (error) throw error
+    return data || false
+  } catch (error) {
+    console.error('Error checking super admin status:', error)
+    return false
+  }
+}
+
+export const getUserAgencyId = async (): Promise<string | null> => {
+  try {
+    const { data, error } = await supabase.rpc('get_user_agency_id')
+    if (error) throw error
+    return data
+  } catch (error) {
+    console.error('Error getting user agency ID:', error)
+    return null
+  }
+}
