@@ -46,6 +46,7 @@ interface FormData {
   comments: string;
 }
 
+// Component interfaces
 interface TabNavigationProps {
   activeTab: number;
   setActiveTab: (index: number) => void;
@@ -119,7 +120,7 @@ const convertToDB = (uiProperty: FormData, agencyId: string) => ({
   owner_name: uiProperty.ownerName || null,
   owner_phone: uiProperty.ownerPhone || null,
   comments: uiProperty.comments || null,
-  agency_id: agencyId // Add agency_id automatically
+  agency_id: agencyId // Critical: Include agency_id for multi-tenancy
 });
 
 // Validation functions
@@ -133,7 +134,7 @@ const validatePositiveInteger = (value: string): boolean => {
   return !isNaN(num) && num >= 0 && Number.isInteger(parseFloat(value));
 };
 
-// Components
+// App Header Component with User Menu
 const AppHeader: React.FC = () => {
   const { user, profile, agency, signOut } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
@@ -149,7 +150,7 @@ const AppHeader: React.FC = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{agency?.name}</h1>
-            <p className="text-gray-600 mt-1">Real Estate Portfolio</p>
+            <p className="text-gray-600 mt-1">Real Estate Portfolio Management</p>
           </div>
           
           <div className="flex items-center gap-4">
@@ -168,7 +169,7 @@ const AppHeader: React.FC = () => {
                 </div>
               </button>
 
-              {/* Dropdown */}
+              {/* Dropdown Menu */}
               {showDropdown && (
                 <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
                   <div className="px-4 py-3 border-b border-gray-200">
@@ -216,6 +217,7 @@ const AppHeader: React.FC = () => {
   );
 };
 
+// Tab Navigation Component
 const TabNavigation: React.FC<TabNavigationProps> = ({ activeTab, setActiveTab, tabs, resultCount }) => (
   <nav className="border-b border-gray-200 bg-white">
     <div className="max-w-7xl mx-auto px-6">
@@ -250,6 +252,7 @@ const TabNavigation: React.FC<TabNavigationProps> = ({ activeTab, setActiveTab, 
   </nav>
 );
 
+// Property Modal Component
 const PropertyModal: React.FC<PropertyModalProps> = ({ property, isOpen, onClose }) => {
   if (!isOpen || !property) return null;
 
@@ -384,9 +387,7 @@ const PropertyModal: React.FC<PropertyModalProps> = ({ property, isOpen, onClose
   );
 };
 
-// Continue with other components...
-// [Note: I'll include the rest in the next update to avoid hitting the length limit]
-
+// Property Form Component
 const PropertyForm: React.FC<PropertyFormProps> = ({ onAddProperty, loading }) => {
   const [formData, setFormData] = useState<FormData>({
     address: '',
@@ -715,8 +716,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ onAddProperty, loading }) =
   );
 };
 
-// [Continuing with SearchFilters, PropertyCard, PropertyList...]
-
+// Search Filters Component
 const SearchFilters: React.FC<SearchFiltersProps> = ({ filters, onFilterChange, onClearFilters, resultCount, loading, searchResults, onPropertyClick }) => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     onFilterChange(e.target.name, e.target.value);
@@ -884,6 +884,7 @@ const SearchFilters: React.FC<SearchFiltersProps> = ({ filters, onFilterChange, 
   );
 };
 
+// Property Card Component
 const PropertyCard: React.FC<PropertyCardProps> = ({ property, onDelete, onPropertyClick, loading }) => {
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -1011,6 +1012,7 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, onDelete, onPrope
   );
 };
 
+// Property List Component
 const PropertyList: React.FC<PropertyListProps> = ({ properties, onDelete, onPropertyClick, loading }) => {
   if (loading) {
     return (
